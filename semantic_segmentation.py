@@ -109,7 +109,7 @@ print net['relu1_1'].eval(feed_dict={input_image: im},session=sess).shape
 
 #input = (1, 523, 769, 64) from layer relu1_1 (later we need to check the input from images on our data set)
 #output = (input + stride - 1)
-deconv = tf.nn.conv2d_transpose(value=net['relu1_1'], filter=_weight_variable((16, 16, 3, 64)),output_shape=(1, 523, 769, 3),
+deconv = tf.nn.conv2d_transpose(value=net['relu1_1'], filter=_weight_variable((3, 3, 3, 64)),output_shape=(1, 523, 769, 3),
 strides=(1, 1, 1, 1), padding='SAME')
 
 sess.run(tf.initialize_all_variables())
