@@ -32,11 +32,11 @@ def _pool_layer(input):
   return tf.nn.max_pool(input, ksize=(1, 2, 2, 1),
     strides=(1, 2, 2, 1), padding='SAME')
           
-def _deconv_layer(input_layer, filter, output_shape):
+def _deconv_layer(input_layer, filter, output_shape, strides):
   '''deconvolution layer'''
   
-  deconv = tf.nn.conv2d_transpose(value=net[input_layer], filter=_weight_variable(filter),
-    output_shape=output_shape, strides=(1, 1, 1, 1), padding='SAME')
+  deconv = tf.nn.conv2d_transpose(value=input_layer, filter=_weight_variable(filter),
+    output_shape=output_shape, strides=strides, padding='SAME')
     
   bias = _bias_variable((output_shape[3],)) #bias shape should match the output channels of the layer.
   return tf.nn.bias_add(deconv, bias)
@@ -109,8 +109,11 @@ for i, name in enumerate(layers):
 im = center(im,mean_pixel)
 im = im[np.newaxis,:,:,:]
 
-#Image representation on layer relu1_1
+#Layer out dimensions
 print net['relu1_1'].eval(feed_dict={input_image: im},session=sess).shape
+print net['pool3'].eval(feed_dict={input_image: im},session=sess).shape
+print net['pool4'].eval(feed_dict={input_image: im},session=sess).shape
+print net['pool5'].eval(feed_dict={input_image: im},session=sess).shape
 
   
 ##########################################
@@ -118,17 +121,40 @@ print net['relu1_1'].eval(feed_dict={input_image: im},session=sess).shape
 ##########################################
 
 #input = (1, 523, 769, 64) from layer relu1_1 (later we need to check the input from images on our data set)
-#output = (input + stride - 1)
-deconv = tf.nn.conv2d_transpose(value=net['relu1_1'], filter=_weight_variable((3, 3, 3, 64)),output_shape=(1, 523, 769, 3),
-strides=(1, 1, 1, 1), padding='SAME')
+#output = (input*stride - 1)
+
+#add a rely after each deconv
+
+#Deconvolutions for up-sampling
+deconv3 = tf.nn.relu(_deconv_layer(net['pool3'], filter=(8, 8, 1, 256),
+  output_shape=(1, 523, 769, 1), strides=(1, 8, 8, 1)))
+  
+deconv4 = tf.nn.relu(_deconv_layer(net['pool4'], filter=(16, 16, 1, 512),
+  output_shape=(1, 523, 769, 1), strides=(1, 16, 16, 1)))
+  
+deconv5 = tf.nn.relu(_deconv_layer(net['pool5'], filter=(32, 32, 1, 512),
+  output_shape=(1, 523, 769, 1), strides=(1, 32, 32, 1)))
+  
+#Concatenate them, one deconvolution per channel
+deconvs = tf.concat(3,(deconv3, deconv4, deconv5))
+print deconvs.get_shape()
+
+#One last convolution to rule them all
+conv    = tf.nn.bias_add(tf.nn.conv2d(deconvs, _weight_variable((1,1,3,1)),
+  strides=(1,1,1,1), padding="SAME"), _bias_variable((1,)))
+print conv.get_shape()
 
 sess.run(tf.initialize_all_variables())
 
-out = deconv.eval(feed_dict={input_image: im},session=sess)[0]
-scipy.misc.imsave('deconv_out.png',out)
-
+# print deconv3.eval(feed_dict={input_image: im},session=sess).shape
+# print deconv4.eval(feed_dict={input_image: im},session=sess).shape
+# print deconv5.eval(feed_dict={input_image: im},session=sess).shape
 
 
 ##########################################
 ########TRAIN DECONVOLUTION LAYERS########
 ##########################################
+
+
+
+sess.close()
