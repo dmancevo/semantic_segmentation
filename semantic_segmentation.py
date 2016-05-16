@@ -4,32 +4,42 @@ import scipy.io
 import tensorflow as tf
 
 def center(image, mean_pixel):
+  '''Center image'''
   return image - mean_pixel
 
 def un_center(image, mean_pixel):
+  '''Un-center image'''
   return image + mean_pixel
 
 def _weight_variable(shape):
+  '''weight variable'''
   initial = tf.truncated_normal(shape, stddev=0.1)
   return tf.Variable(initial)
 
 def _bias_variable(shape):
+  '''bias variable'''
   initial = tf.constant(0.1, shape=shape)
   return tf.Variable(initial)
 
 def _conv_layer(input, weights, bias):
+  '''convolution layer'''
   conv = tf.nn.conv2d(input, tf.constant(weights),
     strides=(1, 1, 1, 1), padding='SAME')
   return tf.nn.bias_add(conv, bias)
 
 def _pool_layer(input):
+  '''pool layer'''
   return tf.nn.max_pool(input, ksize=(1, 2, 2, 1),
     strides=(1, 2, 2, 1), padding='SAME')
           
-#Still need to set this one up
-def _deconv_layer(value, filter, output_shape):
-  deconv = tf.nn.conv2d_transpose(value, filter, output_shape,
-    strides, padding='SAME')
+def _deconv_layer(input_layer, filter, output_shape):
+  '''deconvolution layer'''
+  
+  deconv = tf.nn.conv2d_transpose(value=net[input_layer], filter=_weight_variable(filter),
+    output_shape=output_shape, strides=(1, 1, 1, 1), padding='SAME')
+    
+  bias = _bias_variable((output_shape[3],)) #bias shape should match the output channels of the layer.
+  return tf.nn.bias_add(deconv, bias)
 
 
 ##########################################
