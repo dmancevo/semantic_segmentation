@@ -2,14 +2,7 @@ import numpy as np
 import scipy.misc
 import scipy.io
 import tensorflow as tf
-
-def center(image, mean_pixel):
-  '''Center image'''
-  return image - mean_pixel
-
-def un_center(image, mean_pixel):
-  '''Un-center image'''
-  return image + mean_pixel
+from load_images import train_test
 
 def _weight_variable(shape):
   '''weight variable'''
@@ -32,13 +25,14 @@ def _pool_layer(input):
   return tf.nn.max_pool(input, ksize=(1, 2, 2, 1),
     strides=(1, 2, 2, 1), padding='SAME')
           
-def _deconv_layer(input_layer, filter, output_shape, strides):
+def _deconv_layer(input_layer, filter, input_image, strides):
   '''deconvolution layer'''
   
   deconv = tf.nn.conv2d_transpose(value=input_layer, filter=_weight_variable(filter),
-    output_shape=output_shape, strides=strides, padding='SAME')
+    output_shape=tf.pack((1,tf.shape(input_image)[1],tf.shape(input_image)[2],1)),
+    strides=strides, padding='SAME')
     
-  bias = _bias_variable((output_shape[3],)) #bias shape should match the output channels of the layer.
+  bias = _bias_variable((filter[2],)) #bias shape should match the output channels of the layer.
   return tf.nn.bias_add(deconv, bias)
 
 
@@ -73,10 +67,6 @@ weights = data['layers'][0]
 mean = data['normalization'][0][0][0]
 mean_pixel = np.mean(mean, axis=(0, 1))
 
-#Create placeholder for image (I'm using an arbitrary image here)
-im = scipy.misc.imread("bici.jpg").astype(np.float)
-shape = (1,) + im.shape
-
 #Keep track of all the network layers so we can extract output at arbitrary locations.
 net = {}
 
@@ -87,8 +77,11 @@ g.device('/gpu:0') #Device can be either cpu or gpu
 sess=tf.Session()
 
 #Placeholder for the image
-input_image = tf.placeholder('float', shape=shape)
-current = input_image
+input_image = tf.placeholder(tf.float32, shape=(None, None, None, 3))
+
+#Center image
+centered_image = tf.sub(input_image, tf.constant(mean_pixel, dtype=tf.float32))
+current = centered_image
 
 for i, name in enumerate(layers):
   kind = name[:4]
@@ -105,51 +98,38 @@ for i, name in enumerate(layers):
     current = _pool_layer(current)
   net[name] = current
 
-#Center image and add batch dimension
-im = center(im,mean_pixel)
-im = im[np.newaxis,:,:,:]
-
-#Layer out dimensions
-print net['relu1_1'].eval(feed_dict={input_image: im},session=sess).shape
-print net['pool3'].eval(feed_dict={input_image: im},session=sess).shape
-print net['pool4'].eval(feed_dict={input_image: im},session=sess).shape
-print net['pool5'].eval(feed_dict={input_image: im},session=sess).shape
-
   
 ##########################################
 #########ADD DECONVOLUTION LAYERS#########
 ##########################################
 
-#input = (1, 523, 769, 64) from layer relu1_1 (later we need to check the input from images on our data set)
-#output = (input*stride - 1)
-
-#add a rely after each deconv
 
 #Deconvolutions for up-sampling
-deconv3 = tf.nn.relu(_deconv_layer(net['pool3'], filter=(8, 8, 1, 256),
-  output_shape=(1, 523, 769, 1), strides=(1, 8, 8, 1)))
-  
-deconv4 = tf.nn.relu(_deconv_layer(net['pool4'], filter=(16, 16, 1, 512),
-  output_shape=(1, 523, 769, 1), strides=(1, 16, 16, 1)))
-  
-deconv5 = tf.nn.relu(_deconv_layer(net['pool5'], filter=(32, 32, 1, 512),
-  output_shape=(1, 523, 769, 1), strides=(1, 32, 32, 1)))
+deconv3 = tf.nn.relu(_deconv_layer(input_layer=net['pool3'], filter=(8, 8, 1, 256),
+  input_image=input_image, strides=(1, 8, 8, 1)))
+
+deconv4 = tf.nn.relu(_deconv_layer(input_layer=net['pool4'], filter=(16, 16, 1, 512),
+  input_image=input_image, strides=(1, 16, 16, 1)))
+
+deconv5 = tf.nn.relu(_deconv_layer(input_layer=net['pool5'], filter=(32, 32, 1, 512),
+  input_image=input_image, strides=(1, 32, 32, 1)))
   
 #Concatenate them, one deconvolution per channel
 deconvs = tf.concat(3,(deconv3, deconv4, deconv5))
 
 #One last convolution to rule them all
-conv    = tf.nn.bias_add(tf.nn.conv2d(deconvs, _weight_variable((1,1,3,1)),
-  strides=(1,1,1,1), padding="SAME"), _bias_variable((1,)))
+conv    = tf.nn.bias_add(tf.nn.conv2d(deconvs, _weight_variable((1,1,3,3)),
+  strides=(1,1,1,1), padding="SAME"), _bias_variable((3,)))
 
+#Process one image
+im, se = train_test('2010_003468')
+im = im[np.newaxis,:,:,:]
 
-# sess.run(tf.initialize_all_variables())
+sess.run(tf.initialize_all_variables())
 
-print deconv3.get_shape()
-print deconv4.get_shape()
-print deconv5.get_shape()
-print deconvs.get_shape()
-print conv.get_shape()
+out = conv.eval(feed_dict={input_image: im},session=sess)
+print out.shape
+scipy.misc.imsave("out.png",out[0])
 
 
 ##########################################
