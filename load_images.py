@@ -1,8 +1,14 @@
 import numpy as np
 import scipy.misc
+import os
+import re
 
 IM_PATH = "TrainVal/VOCdevkit/VOC2011/JPEGImages/{im_id}.jpg"
 SE_PATH = "TrainVal/VOCdevkit/VOC2011/SegmentationClass/{im_id}.png"
+
+images = [re.match(r'[^\.]+',f).group(0) \
+  for f in os.listdir("TrainVal/VOCdevkit/VOC2011/SegmentationClass/")]
+  
 
 RGB = {
   255: (255,255,255), 0: (0,0,0),
@@ -24,6 +30,8 @@ def save_side2side(im_id):
   im = scipy.misc.imread(IM_PATH.format(im_id=im_id))
   se = scipy.misc.imread(SE_PATH.format(im_id=im_id)).astype(np.int)
   
+  print im_id
+  
   im_se = np.zeros(shape=(se.shape+(3,)))
   
   for i in range(se.shape[0]):
@@ -35,4 +43,13 @@ def save_side2side(im_id):
       
   scipy.misc.imsave("semantic_segmentation.png",np.hstack((im,im_se)))
   
-save_side2side("2007_008964")
+def train_test(im_id):
+  '''return train image and ground truth segmentation'''
+  im = scipy.misc.imread(IM_PATH.format(im_id=im_id)).astype(np.int)
+  se = scipy.misc.imread(SE_PATH.format(im_id=im_id)).astype(np.int)
+  
+  return im, se
+  
+  
+if __name__ == '__main__':
+  save_side2side(np.random.choice(images))
