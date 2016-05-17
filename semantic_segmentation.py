@@ -137,18 +137,19 @@ deconv5 = tf.nn.relu(_deconv_layer(net['pool5'], filter=(32, 32, 1, 512),
   
 #Concatenate them, one deconvolution per channel
 deconvs = tf.concat(3,(deconv3, deconv4, deconv5))
-print deconvs.get_shape()
 
 #One last convolution to rule them all
 conv    = tf.nn.bias_add(tf.nn.conv2d(deconvs, _weight_variable((1,1,3,1)),
   strides=(1,1,1,1), padding="SAME"), _bias_variable((1,)))
+
+
+# sess.run(tf.initialize_all_variables())
+
+print deconv3.get_shape()
+print deconv4.get_shape()
+print deconv5.get_shape()
+print deconvs.get_shape()
 print conv.get_shape()
-
-sess.run(tf.initialize_all_variables())
-
-# print deconv3.eval(feed_dict={input_image: im},session=sess).shape
-# print deconv4.eval(feed_dict={input_image: im},session=sess).shape
-# print deconv5.eval(feed_dict={input_image: im},session=sess).shape
 
 
 ##########################################
