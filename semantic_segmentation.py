@@ -2,7 +2,7 @@ import numpy as np
 import scipy.misc
 import scipy.io
 import tensorflow as tf
-from load_images import train_test
+from load_images import Data
 
 def _weight_variable(shape):
   '''weight variable'''
@@ -70,12 +70,6 @@ mean_pixel = np.mean(mean, axis=(0, 1))
 #Keep track of all the network layers so we can extract output at arbitrary locations.
 net = {}
 
-#Set up the graph and the session
-g = tf.Graph()
-g.as_default()
-g.device('/gpu:0') #Device can be either cpu or gpu
-sess=tf.Session()
-
 #Placeholder for the image
 input_image = tf.placeholder(tf.float32, shape=(None, None, None, 3))
 
@@ -118,24 +112,53 @@ deconv5 = tf.nn.relu(_deconv_layer(input_layer=net['pool5'], filter=(32, 32, 1, 
 deconvs = tf.concat(3,(deconv3, deconv4, deconv5))
 
 #One last convolution to rule them all
-conv    = tf.nn.bias_add(tf.nn.conv2d(deconvs, _weight_variable((1,1,3,3)),
-  strides=(1,1,1,1), padding="SAME"), _bias_variable((3,)))
+conv    = tf.nn.bias_add(tf.nn.conv2d(deconvs, _weight_variable((1,1,3,21)),
+  strides=(1,1,1,1), padding="SAME"), _bias_variable((21,)))
+  
+#Network estimate
+exp = tf.exp(conv)
+norm = tf.reduce_sum(exp, reduction_indices=3, keep_dims=True)
+y_hat = tf.div(exp, norm)
 
-#Process one image
-im, se = train_test('2010_003468')
-im = im[np.newaxis,:,:,:]
-
-sess.run(tf.initialize_all_variables())
-
-out = conv.eval(feed_dict={input_image: im},session=sess)
-print out.shape
-scipy.misc.imsave("out.png",out[0])
 
 
 ##########################################
 ########TRAIN DECONVOLUTION LAYERS########
 ##########################################
 
+#Test data
+indices = tf.placeholder(tf.int64, shape=(None,None,None))
+targets = tf.one_hot(indices=indices, depth=21, on_value=1.0, off_value=0.0, axis=-1)
+
+#Loss function
+# loss =
 
 
-sess.close()
+#Training time in tensor-ville...
+data_set = Data()
+with tf.device("/gpu:0"), tf.Session() as sess:
+  sess.run(tf.initialize_all_variables())
+  
+  batch = data_set.get_batch(1)
+  t = y_hat.eval(feed_dict={input_image:batch[0], indices:batch[1]})
+  
+  print t.shape
+  
+  print t[0,34,51,:], np.sum(t[0,34,51,:])
+  print t[0,112,32,:], np.sum(t[0,112,32,:])
+  print t[0,203,162,:], np.sum(t[0,203,162,:])
+  print t[0,79,65,:], np.sum(t[0,79,65,:])
+  
+  t = exp.eval(feed_dict={input_image:batch[0], indices:batch[1]})
+  
+  print t.shape
+  
+  print t[0,34,51,:], np.sum(t[0,34,51,:])
+  print t[0,112,32,:], np.sum(t[0,112,32,:])
+  print t[0,203,162,:], np.sum(t[0,203,162,:])
+  print t[0,79,65,:], np.sum(t[0,79,65,:])
+  
+  
+
+
+# scipy.misc.imsave("out.png",out[0])
