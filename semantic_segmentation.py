@@ -133,9 +133,11 @@ indices = tf.placeholder(tf.int64, shape=(None,None,None))
 targets = tf.one_hot(indices=indices, depth=21, on_value=1.0, off_value=0.0, axis=-1)
 
 #Loss function (cross-entropy)
-with tf.name_scope('loss'):
-  loss = -tf.reduce_sum(tf.mul(targets, tf.log(y_hat)))
-  tf.scalar_summary('loss/', loss)
+loss = -tf.reduce_sum(tf.mul(targets, tf.log(y_hat)))
+tf.scalar_summary("train_loss/", loss)
+
+test_loss = -tf.reduce_sum(tf.mul(targets, tf.log(y_hat)))
+tf.scalar_summary("test_loss/", test_loss)
 
 #Adamame for optimization
 train_step = tf.train.AdamOptimizer(1e-4).minimize(loss)
@@ -146,10 +148,10 @@ train_step = tf.train.AdamOptimizer(1e-4).minimize(loss)
 saver = tf.train.Saver()
 
 data_set = Data()
-with tf.device("/gpu:0"), tf.Session() as sess:
+with tf.Session() as sess:
   
-  #Summaries writer
-  writer = tf.train.SummaryWriter("./", sess.graph)
+  writer = tf.train.SummaryWriter("./Events", sess.graph)
+  summary_op = tf.merge_all_summaries()
   
   try:
     saver.restore(sess, "model.ckpt")
@@ -159,17 +161,30 @@ with tf.device("/gpu:0"), tf.Session() as sess:
     print("Model initialized.")
   
   print "Training"
-  for i in range(3):
+  for i in range(21):
   
     #Fetch a batch
-    batch = data_set.get_batch(20)
+    batch = data_set.get_batch(12)
+    feed_dict={input_image:batch[0], indices:batch[1]}
     
-    train_step.run(feed_dict={input_image:batch[0], indices:batch[1]})
+    with tf.device("/gpu:0"):
+      train_step.run(feed_dict=feed_dict)
     
-    if i%1 == 0:
+    if i%5 == 0:
       print i, datetime.now()
+      
       # save_path = saver.save(sess, "model.ckpt")
       # print("%Model saved in file: %s" % save_path)
+      
+      #Test
+      test_batch = data_set.get_batch(12, train=False)
+      feed_dict={input_image:test_batch[0], indices:test_batch[1]}
+      test_loss.eval(feed_dict=feed_dict)
+      
+      with tf.device("/cpu:0"):
+        summary_str = summary_op.eval(feed_dict=feed_dict)
+        writer.add_summary(summary_str, i)
+        writer.flush()
       
   
   
