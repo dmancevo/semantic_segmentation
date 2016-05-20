@@ -17,9 +17,9 @@ def _bias_variable(shape):
 
 def _conv_layer(input, weights, bias):
   '''convolution layer'''
-  conv = tf.nn.conv2d(input, tf.constant(weights),
+  conv = tf.nn.conv2d(input, tf.Variable(weights, dtype=tf.float32),
     strides=(1, 1, 1, 1), padding='SAME')
-  return tf.nn.bias_add(conv, bias)
+  return tf.nn.bias_add(conv, tf.Variable(bias, dtype=tf.float32))
 
 def _pool_layer(input):
   '''pool layer'''
@@ -55,6 +55,10 @@ layers = (
 
       'conv5_1', 'relu5_1', 'conv5_2', 'relu5_2', 'conv5_3',
       'relu5_3', 'conv5_4', 'relu5_4', 'pool5',
+      
+      'fc6', 'relu6',
+      
+      'fc7', 'relu7',
   )
   
 
@@ -80,7 +84,7 @@ current = centered_image
 
 for i, name in enumerate(layers):
   kind = name[:4]
-  if kind == 'conv':
+  if kind == 'conv' or kind == 'fc':
     kernels, bias = weights[i][0][0][0][0]
     # matconvnet: weights are [width, height, in_channels, out_channels]
     # tensorflow: weights are [height, width, in_channels, out_channels]
@@ -91,6 +95,7 @@ for i, name in enumerate(layers):
     current = tf.nn.relu(current)
   elif kind == 'pool':
     current = _pool_layer(current)
+    
   net[name] = current
 
   
@@ -99,20 +104,26 @@ for i, name in enumerate(layers):
 ##########################################
 
 #Deconvolutions for up-sampling
-deconv3 = tf.nn.relu(_deconv_layer(input_layer=net['pool3'], filter=(8, 8, 3, 256),
+deconv8 = tf.nn.relu(_deconv_layer(input_layer=net['pool3'], filter=(8, 8, 1, 256),
   input_image=input_image, strides=(1, 8, 8, 1)))
 
-deconv4 = tf.nn.relu(_deconv_layer(input_layer=net['pool4'], filter=(16, 16, 3, 512),
+deconv16 = tf.nn.relu(_deconv_layer(input_layer=net['pool4'], filter=(16, 16, 1, 512),
   input_image=input_image, strides=(1, 16, 16, 1)))
 
-deconv5 = tf.nn.relu(_deconv_layer(input_layer=net['pool5'], filter=(32, 32, 3, 512),
+deconv32 = tf.nn.relu(_deconv_layer(input_layer=net['relu7'], filter=(32, 32, 1, 512),
   input_image=input_image, strides=(1, 32, 32, 1)))
+
+#For heat_map
+# deconv32 = tf.nn.conv2d_transpose(value=net['relu7'], filter=tf.ones(shape=(32, 32, 1, 512)),
+#     output_shape=tf.pack((tf.shape(net['relu7'])[0],tf.shape(input_image)[1],tf.shape(input_image)[2],1)),
+#     strides=(1, 32, 32, 1), padding='SAME')
+  
   
 #Concatenate them, one deconvolution per channel
-deconvs = tf.concat(3,(deconv3, deconv4, deconv5))
+deconvs = tf.concat(3,(deconv8, deconv16, deconv32))
 
 #One last convolution to rule them all
-conv    = tf.nn.bias_add(tf.nn.conv2d(deconvs, _weight_variable((1,1,9,21)),
+conv    = tf.nn.bias_add(tf.nn.conv2d(deconvs, _weight_variable((1,1,3,21)),
   strides=(1,1,1,1), padding="SAME"), _bias_variable((21,)))
   
 #Batch normalization
@@ -134,10 +145,7 @@ targets = tf.one_hot(indices=indices, depth=21, on_value=1.0, off_value=0.0, axi
 
 #Loss function (cross-entropy)
 loss = -tf.reduce_sum(tf.mul(targets, tf.log(y_hat)))
-tf.scalar_summary("train_loss/", loss)
-
-test_loss = -tf.reduce_sum(tf.mul(targets, tf.log(y_hat)))
-tf.scalar_summary("test_loss/", test_loss)
+loss_summary = tf.scalar_summary("cross_entropy_loss/", loss)
 
 #Adamame for optimization
 train_step = tf.train.AdamOptimizer(1e-4).minimize(loss)
@@ -150,8 +158,10 @@ saver = tf.train.Saver()
 data_set = Data()
 with tf.Session() as sess:
   
-  writer = tf.train.SummaryWriter("./Events", sess.graph)
+  train_writer = tf.train.SummaryWriter("./Events/train", sess.graph)
+  test_writer = tf.train.SummaryWriter("./Events/test")
   summary_op = tf.merge_all_summaries()
+
   
   try:
     saver.restore(sess, "model.ckpt")
@@ -161,16 +171,17 @@ with tf.Session() as sess:
     print("Model initialized.")
   
   print "Training"
-  for i in range(21):
+  for i in range(5):
   
     #Fetch a batch
     batch = data_set.get_batch(12)
     feed_dict={input_image:batch[0], indices:batch[1]}
     
     with tf.device("/gpu:0"):
+      
       train_step.run(feed_dict=feed_dict)
     
-    if i%5 == 0:
+    if i%1 == 0:
       print i, datetime.now()
       
       # save_path = saver.save(sess, "model.ckpt")
@@ -178,13 +189,17 @@ with tf.Session() as sess:
       
       #Test
       test_batch = data_set.get_batch(12, train=False)
-      feed_dict={input_image:test_batch[0], indices:test_batch[1]}
-      test_loss.eval(feed_dict=feed_dict)
+      test_feed_dict={input_image:test_batch[0], indices:test_batch[1]}
+      # test_loss.eval(feed_dict=feed_dict)
       
       with tf.device("/cpu:0"):
-        summary_str = summary_op.eval(feed_dict=feed_dict)
-        writer.add_summary(summary_str, i)
-        writer.flush()
+        train_summary_str = summary_op.eval(feed_dict=feed_dict)
+        train_writer.add_summary(train_summary_str, i)
+        train_writer.flush()
+        
+        test_summary_str = summary_op.eval(feed_dict=test_feed_dict)
+        test_writer.add_summary(test_summary_str, i)
+        test_writer.flush()
       
   
   
@@ -192,7 +207,7 @@ with tf.Session() as sess:
 #########VISUALIZE A FEW EXAMPLES#########
 ##########################################
 
-#Test time layer
+# Test time layer
 # se_hat = tf.argmax(conv, 3)
   
 # with tf.device("/gpu:0"), tf.Session() as sess:
@@ -206,6 +221,6 @@ with tf.Session() as sess:
   
 #   im_id, im, se = Data.get_image()
   
-#   net_output = se_hat.eval(feed_dict={input_image:[im], indices:[se]})[0]
+#   net_output = deconv32.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:,0]
   
 #   Data.save_side2side(im_id, net_output, title="semantic_segmentation_example.png")
