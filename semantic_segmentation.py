@@ -161,7 +161,6 @@ with tf.Session() as sess:
   train_writer = tf.train.SummaryWriter("./Events/train", sess.graph)
   test_writer = tf.train.SummaryWriter("./Events/test")
   summary_op = tf.merge_all_summaries()
-
   
   try:
     saver.restore(sess, "model.ckpt")
@@ -178,19 +177,17 @@ with tf.Session() as sess:
     feed_dict={input_image:batch[0], indices:batch[1]}
     
     with tf.device("/gpu:0"):
-      
       train_step.run(feed_dict=feed_dict)
     
     if i%1 == 0:
       print i, datetime.now()
       
-      # save_path = saver.save(sess, "model.ckpt")
-      # print("%Model saved in file: %s" % save_path)
+      save_path = saver.save(sess, "model.ckpt")
+      print("%Model saved in file: %s" % save_path)
       
       #Test
       test_batch = data_set.get_batch(12, train=False)
       test_feed_dict={input_image:test_batch[0], indices:test_batch[1]}
-      # test_loss.eval(feed_dict=feed_dict)
       
       with tf.device("/cpu:0"):
         train_summary_str = summary_op.eval(feed_dict=feed_dict)
@@ -208,19 +205,26 @@ with tf.Session() as sess:
 ##########################################
 
 # Test time layer
-# se_hat = tf.argmax(conv, 3)
+se_hat = tf.argmax(conv, 3)
   
-# with tf.device("/gpu:0"), tf.Session() as sess:
+with tf.device("/gpu:0"), tf.Session() as sess:
   
-#   try:
-#     saver.restore(sess, "model.ckpt")
-#     print("Model restored.")
-#   except:
-#     sess.run(tf.initialize_all_variables())
-#     print("Model initialized.")
+  try:
+    saver.restore(sess, "model.ckpt")
+    print("Model restored.")
+  except:
+    sess.run(tf.initialize_all_variables())
+    print("Model initialized.")
   
-#   im_id, im, se = Data.get_image()
   
-#   net_output = deconv32.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:,0]
+  #Semantic segmentation
+  im_id, im, se = Data.get_image()
+  net_output = se_hat.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:]
+  Data.save_side2side(im_id, net_output, title="semantic_segmentation_example.png")
   
-#   Data.save_side2side(im_id, net_output, title="semantic_segmentation_example.png")
+  #Heatmap
+  # im_id, im, se = Data.get_image()
+  # heat = deconv32.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:,0]
+  # heat = 255*(heat/np.max(heat))
+  # scipy.misc.imsave(title,im)
+  # scipy.misc.imsave(title,heat)
