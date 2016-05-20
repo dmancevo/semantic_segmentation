@@ -2,6 +2,8 @@ import numpy as np
 import scipy.misc
 import os
 import re
+import threading
+import Image
 
 class Data:
   
@@ -25,51 +27,87 @@ class Data:
     19: (0,139,139), 20: (139,105,20),
   }
   
-  def __init__(self):
+  def __init__(self, train=0.75):
     
-    #Current image
-    self.seen = set()
+    #Training set size
+    self.train = set(np.random.choice(Data.images,
+      size=int(train*float(len(Data.images)))))
+      
+    self.batch = None
+    self.batch_ready = False
     
-  def get_batch(self, n):
+  @staticmethod
+  def crop(im, se):
+    '''Random crop to min height and with'''
     
-    if len(self.seen) == len(Data.images):
-      self.seen = set()
+    width, height = se.shape
     
-    i = 0
+    left   = np.random.choice(range(0,width-111))
+    bottom = np.random.choice(range(0,height-173))
+    
+    se = se[left:(left+112),bottom:(bottom+174)]
+    im = im[left:(left+112),bottom:(bottom+174),:]
+    
+    return im, se
+    
+  def get_batch(self, n, train=True):
+    
+    if self.batch is None:
+      self.next_batch(n,train)
+      self.batch_ready = False
+      t1 = threading.Thread(target=self.next_batch, kwargs={'n':n, 'train':train})
+      t1.start()
+      return self.batch
+    else:
+      while not self.batch_ready:
+        continue
+      self.batch_ready = False
+      t1 = threading.Thread(target=self.next_batch, kwargs={'n':n, 'train':train})
+      t1.start()
+      return self.batch
+      
+  def next_batch(self,n,train=True):
+    
     imgs, segmentations = [], []
-    while len(imgs) < n and i < len(Data.images):
-      i += 1
+    batch = set()
+    i=0
+    while len(imgs) < n and i<2*len(Data.images):
+      i+=1
       
       im_id = np.random.choice(Data.images)
       
-      if im_id in self.seen:
+      if im_id in batch:
         continue
       
+      if train and im_id not in self.train:
+        continue
+      elif not train and im_id in self.train:
+        continue
+      
+      #Semantic segmentation ground truth
       se = scipy.misc.imread(Data.SE_PATH.format(im_id=im_id)).astype(np.int)
-      
-      if len(imgs) == 0:
-        dim = se.shape
-      elif not se.shape==dim:
-        continue
-      else:
-        self.seen.add(im_id)
         
       #Load image
-      im = scipy.misc.imread(Data.IM_PATH.format(im_id=im_id)).astype(np.int)
+      im = scipy.misc.imread(Data.IM_PATH.format(im_id=im_id)).astype(np.float)
+      
+      #Crop
+      im, se = Data.crop(im, se)
       
       #Black is the new white
       se[se==255] = 0
       
+      batch.add(im_id)
       imgs.append(im)
       segmentations.append(se.astype(int))
       
-    return [imgs, segmentations]
-  
+    self.batch = [imgs, segmentations]
+    self.batch_ready = True
+
   @classmethod
-  def save_side2side(im_id):
+  def save_side2side(cls, im_id, net_output, title="semantic_segmentation_example.png"):
     '''Save Image Semantic Segmentation'''
-    im = scipy.misc.imread(Data.IM_PATH.format(im_id=im_id))
-    se = scipy.misc.imread(Data.SE_PATH.format(im_id=im_id)).astype(np.int)
+    im = scipy.misc.imread(cls.IM_PATH.format(im_id=im_id))
+    se = scipy.misc.imread(cls.SE_PATH.format(im_id=im_id)).astype(np.int)
     
     print im_id
     
@@ -77,27 +115,49 @@ class Data:
     
     for i in range(se.shape[0]):
       for j in range(se.shape[1]):
-        r, g, b = Data.RGB[se[i][j]]
+        r, g, b = cls.RGB[se[i][j]]
         im_se[i][j][0] = r
         im_se[i][j][1] = g
         im_se[i][j][2] = b
         
-    scipy.misc.imsave("semantic_segmentation.png",np.hstack((im,im_se)))
+    im_hat = np.zeros(shape=im_se.shape)
+    for i in range(se.shape[0]):
+      for j in range(se.shape[1]):
+        r, g, b = cls.RGB[net_output[i][j]]
+        im_hat[i][j][0] = r
+        im_hat[i][j][1] = g
+        im_hat[i][j][2] = b
+        
+    scipy.misc.imsave(title,np.hstack((im,im_se,im_hat)))
     
-  
+  @classmethod
+  def get_image(cls):
+    '''Return image id, image and semantic segmentation ground truth'''
+    
+    im_id = np.random.choice(cls.images)
+    se = scipy.misc.imread(cls.SE_PATH.format(im_id=im_id)).astype(np.int)
+    im = scipy.misc.imread(cls.IM_PATH.format(im_id=im_id)).astype(np.float)
+    
+    return im_id, im, se
+    
+    
   
 if __name__ == '__main__':
   
+  from datetime import datetime
+
   # save_side2side(np.random.choice(Data.images))
   
   data_set = Data()
-  batch = data_set.get_batch(20)
+  print datetime.now()
+  for _ in range(10):
+    
+    batch = data_set.get_batch(20, train=True)
+
+  print datetime.now()
   
-  print batch[0][0].shape, batch[1][0].shape
-  print batch[0][1].shape, batch[1][1].shape
+  # batch = data_set.get_batch(7, train=False)
   
-  batch = data_set.get_batch(20)
-  
-  print batch[0][0].shape, batch[1][0].shape
-  print batch[0][1].shape, batch[1][1].shape
+  # print batch[0][0].shape, batch[1][0].shape
+  # print batch[0][1].shape, batch[1][1].shape
   

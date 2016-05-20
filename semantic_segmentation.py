@@ -3,16 +3,17 @@ import scipy.misc
 import scipy.io
 import tensorflow as tf
 from load_images import Data
+from datetime import datetime
 
 def _weight_variable(shape):
   '''weight variable'''
   initial = tf.truncated_normal(shape, stddev=0.1)
-  return tf.Variable(initial)
+  return tf.Variable(initial, dtype=tf.float32)
 
 def _bias_variable(shape):
   '''bias variable'''
   initial = tf.constant(0.1, shape=shape)
-  return tf.Variable(initial)
+  return tf.Variable(initial, dtype=tf.float32)
 
 def _conv_layer(input, weights, bias):
   '''convolution layer'''
@@ -29,7 +30,7 @@ def _deconv_layer(input_layer, filter, input_image, strides):
   '''deconvolution layer'''
   
   deconv = tf.nn.conv2d_transpose(value=input_layer, filter=_weight_variable(filter),
-    output_shape=tf.pack((1,tf.shape(input_image)[1],tf.shape(input_image)[2],1)),
+    output_shape=tf.pack((tf.shape(input_layer)[0],tf.shape(input_image)[1],tf.shape(input_image)[2],filter[2])),
     strides=strides, padding='SAME')
     
   bias = _bias_variable((filter[2],)) #bias shape should match the output channels of the layer.
@@ -97,30 +98,31 @@ for i, name in enumerate(layers):
 #########ADD DECONVOLUTION LAYERS#########
 ##########################################
 
-
 #Deconvolutions for up-sampling
-deconv3 = tf.nn.relu(_deconv_layer(input_layer=net['pool3'], filter=(8, 8, 1, 256),
+deconv3 = tf.nn.relu(_deconv_layer(input_layer=net['pool3'], filter=(8, 8, 3, 256),
   input_image=input_image, strides=(1, 8, 8, 1)))
 
-deconv4 = tf.nn.relu(_deconv_layer(input_layer=net['pool4'], filter=(16, 16, 1, 512),
+deconv4 = tf.nn.relu(_deconv_layer(input_layer=net['pool4'], filter=(16, 16, 3, 512),
   input_image=input_image, strides=(1, 16, 16, 1)))
 
-deconv5 = tf.nn.relu(_deconv_layer(input_layer=net['pool5'], filter=(32, 32, 1, 512),
+deconv5 = tf.nn.relu(_deconv_layer(input_layer=net['pool5'], filter=(32, 32, 3, 512),
   input_image=input_image, strides=(1, 32, 32, 1)))
   
 #Concatenate them, one deconvolution per channel
 deconvs = tf.concat(3,(deconv3, deconv4, deconv5))
 
 #One last convolution to rule them all
-conv    = tf.nn.bias_add(tf.nn.conv2d(deconvs, _weight_variable((1,1,3,21)),
+conv    = tf.nn.bias_add(tf.nn.conv2d(deconvs, _weight_variable((1,1,9,21)),
   strides=(1,1,1,1), padding="SAME"), _bias_variable((21,)))
   
+#Batch normalization
+from batch_norm import batch_norm
+bn = batch_norm(conv, scale=True, is_training=True)
+  
 #Network estimate
-exp = tf.exp(conv)
+exp = tf.exp(bn)
 norm = tf.reduce_sum(exp, reduction_indices=3, keep_dims=True)
 y_hat = tf.div(exp, norm)
-
-
 
 ##########################################
 ########TRAIN DECONVOLUTION LAYERS########
@@ -130,35 +132,65 @@ y_hat = tf.div(exp, norm)
 indices = tf.placeholder(tf.int64, shape=(None,None,None))
 targets = tf.one_hot(indices=indices, depth=21, on_value=1.0, off_value=0.0, axis=-1)
 
-#Loss function
-# loss =
+#Loss function (cross-entropy)
+with tf.name_scope('loss'):
+  loss = -tf.reduce_sum(tf.mul(targets, tf.log(y_hat)))
+  tf.scalar_summary('loss/', loss)
 
+#Adamame for optimization
+train_step = tf.train.AdamOptimizer(1e-4).minimize(loss)
 
 #Training time in tensor-ville...
+
+#Saver object
+saver = tf.train.Saver()
+
 data_set = Data()
 with tf.device("/gpu:0"), tf.Session() as sess:
-  sess.run(tf.initialize_all_variables())
   
-  batch = data_set.get_batch(1)
-  t = y_hat.eval(feed_dict={input_image:batch[0], indices:batch[1]})
+  #Summaries writer
+  writer = tf.train.SummaryWriter("./", sess.graph)
   
-  print t.shape
+  try:
+    saver.restore(sess, "model.ckpt")
+    print("Model restored.")
+  except:
+    sess.run(tf.initialize_all_variables())
+    print("Model initialized.")
   
-  print t[0,34,51,:], np.sum(t[0,34,51,:])
-  print t[0,112,32,:], np.sum(t[0,112,32,:])
-  print t[0,203,162,:], np.sum(t[0,203,162,:])
-  print t[0,79,65,:], np.sum(t[0,79,65,:])
+  print "Training"
+  for i in range(3):
   
-  t = exp.eval(feed_dict={input_image:batch[0], indices:batch[1]})
+    #Fetch a batch
+    batch = data_set.get_batch(20)
+    
+    train_step.run(feed_dict={input_image:batch[0], indices:batch[1]})
+    
+    if i%1 == 0:
+      print i, datetime.now()
+      # save_path = saver.save(sess, "model.ckpt")
+      # print("%Model saved in file: %s" % save_path)
+      
   
-  print t.shape
   
-  print t[0,34,51,:], np.sum(t[0,34,51,:])
-  print t[0,112,32,:], np.sum(t[0,112,32,:])
-  print t[0,203,162,:], np.sum(t[0,203,162,:])
-  print t[0,79,65,:], np.sum(t[0,79,65,:])
-  
-  
+##########################################
+#########VISUALIZE A FEW EXAMPLES#########
+##########################################
 
-
-# scipy.misc.imsave("out.png",out[0])
+#Test time layer
+# se_hat = tf.argmax(conv, 3)
+  
+# with tf.device("/gpu:0"), tf.Session() as sess:
+  
+#   try:
+#     saver.restore(sess, "model.ckpt")
+#     print("Model restored.")
+#   except:
+#     sess.run(tf.initialize_all_variables())
+#     print("Model initialized.")
+  
+#   im_id, im, se = Data.get_image()
+  
+#   net_output = se_hat.eval(feed_dict={input_image:[im], indices:[se]})[0]
+  
+#   Data.save_side2side(im_id, net_output, title="semantic_segmentation_example.png")
