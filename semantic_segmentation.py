@@ -4,6 +4,7 @@ import scipy.io
 import tensorflow as tf
 from load_images import Data
 from datetime import datetime
+import pickle as pkl
 
 def _weight_variable(shape):
   '''weight variable'''
@@ -155,22 +156,30 @@ train_step = tf.train.AdamOptimizer(1e-4).minimize(loss)
 #Saver object
 saver = tf.train.Saver()
 
+#Step
+try:
+  with open("Model_data/step.pkl","rb") as f:
+    step = pkl.load(f)
+except:
+  step = 0
+
 data_set = Data()
 with tf.Session() as sess:
   
-  train_writer = tf.train.SummaryWriter("./Events/train", sess.graph)
-  test_writer = tf.train.SummaryWriter("./Events/test")
+  train_writer = tf.train.SummaryWriter("./Model_data/train", sess.graph)
+  test_writer = tf.train.SummaryWriter("./Model_data/test")
   summary_op = tf.merge_all_summaries()
   
   try:
-    saver.restore(sess, "model.ckpt")
+    saver.restore(sess, "Model_data/model.ckpt")
     print("Model restored.")
   except:
     sess.run(tf.initialize_all_variables())
     print("Model initialized.")
   
   print "Training"
-  for i in range(5):
+  for _ in range(100):
+    step += 1
   
     #Fetch a batch
     batch = data_set.get_batch(12)
@@ -179,11 +188,11 @@ with tf.Session() as sess:
     with tf.device("/gpu:0"):
       train_step.run(feed_dict=feed_dict)
     
-    if i%1 == 0:
-      print i, datetime.now()
+    if _>0 and _%2 == 0:
+      print step, datetime.now()
       
-      save_path = saver.save(sess, "model.ckpt")
-      print("%Model saved in file: %s" % save_path)
+      save_path = saver.save(sess, "Model_data/model.ckpt")
+      print("Model saved in file: %s" % save_path)
       
       #Test
       test_batch = data_set.get_batch(12, train=False)
@@ -191,14 +200,17 @@ with tf.Session() as sess:
       
       with tf.device("/cpu:0"):
         train_summary_str = summary_op.eval(feed_dict=feed_dict)
-        train_writer.add_summary(train_summary_str, i)
+        train_writer.add_summary(train_summary_str, step)
         train_writer.flush()
         
         test_summary_str = summary_op.eval(feed_dict=test_feed_dict)
-        test_writer.add_summary(test_summary_str, i)
+        test_writer.add_summary(test_summary_str, step)
         test_writer.flush()
       
-  
+print step, datetime.now()
+#Save step
+with open("Model_data/step.pkl","wb") as f:
+  step = pkl.dump(step,f)
   
 ##########################################
 #########VISUALIZE A FEW EXAMPLES#########
@@ -222,9 +234,9 @@ with tf.device("/gpu:0"), tf.Session() as sess:
   net_output = se_hat.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:]
   Data.save_side2side(im_id, net_output, title="semantic_segmentation_example.png")
   
-  #Heatmap
-  # im_id, im, se = Data.get_image()
-  # heat = deconv32.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:,0]
-  # heat = 255*(heat/np.max(heat))
-  # scipy.misc.imsave(title,im)
-  # scipy.misc.imsave(title,heat)
+  Heatmap
+  im_id, im, se = Data.get_image()
+  heat = deconv32.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:,0]
+  heat = 255*(heat/np.max(heat))
+  scipy.misc.imsave(title,im)
+  scipy.misc.imsave(title,heat)
