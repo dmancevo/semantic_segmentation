@@ -131,10 +131,11 @@ class Data:
     scipy.misc.imsave(title,np.hstack((im,im_se,im_hat)))
     
   @classmethod
-  def get_image(cls):
+  def get_image(cls, im_id=None):
     '''Return image id, image and semantic segmentation ground truth'''
     
-    im_id = np.random.choice(cls.images)
+    if im_id is None:
+      im_id = np.random.choice(cls.images)
     se = scipy.misc.imread(cls.SE_PATH.format(im_id=im_id)).astype(np.int)
     im = scipy.misc.imread(cls.IM_PATH.format(im_id=im_id)).astype(np.float)
     

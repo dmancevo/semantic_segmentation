@@ -166,8 +166,8 @@ except:
 data_set = Data()
 with tf.Session() as sess:
   
-  train_writer = tf.train.SummaryWriter("./Model_data/train", sess.graph)
-  test_writer = tf.train.SummaryWriter("./Model_data/test")
+  train_writer = tf.train.SummaryWriter("./Model_data/train/", sess.graph)
+  test_writer = tf.train.SummaryWriter("./Model_data/test/")
   summary_op = tf.merge_all_summaries()
   
   try:
@@ -188,7 +188,7 @@ with tf.Session() as sess:
     with tf.device("/gpu:0"):
       train_step.run(feed_dict=feed_dict)
     
-    if _>0 and _%2 == 0:
+    if step%20 == 0:
       print step, datetime.now()
       
       save_path = saver.save(sess, "Model_data/model.ckpt")
@@ -210,7 +210,7 @@ with tf.Session() as sess:
 print step, datetime.now()
 #Save step
 with open("Model_data/step.pkl","wb") as f:
-  step = pkl.dump(step,f)
+  pkl.dump(step,f)
   
 ##########################################
 #########VISUALIZE A FEW EXAMPLES#########
@@ -228,15 +228,14 @@ with tf.device("/gpu:0"), tf.Session() as sess:
     sess.run(tf.initialize_all_variables())
     print("Model initialized.")
   
-  
   #Semantic segmentation
-  im_id, im, se = Data.get_image()
+  im_id, im, se = Data.get_image("2011_001967")
   net_output = se_hat.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:]
-  Data.save_side2side(im_id, net_output, title="semantic_segmentation_example.png")
+  Data.save_side2side(im_id, net_output, title="examples/semantic_segmentation_example_{step}.png".format(step=step))
   
-  Heatmap
-  im_id, im, se = Data.get_image()
-  heat = deconv32.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:,0]
-  heat = 255*(heat/np.max(heat))
-  scipy.misc.imsave(title,im)
-  scipy.misc.imsave(title,heat)
+#   # Heatmap
+  # im_id, im, se = Data.get_image()
+  # heat = deconv32.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:,0]
+  # heat = 255*(heat/np.max(heat))
+  # scipy.misc.imsave("heat_map".format(,im)
+  # scipy.misc.imsave("image",heat)
