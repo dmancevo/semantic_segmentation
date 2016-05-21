@@ -145,7 +145,7 @@ indices = tf.placeholder(tf.int64, shape=(None,None,None))
 targets = tf.one_hot(indices=indices, depth=21, on_value=1.0, off_value=0.0, axis=-1)
 
 #Loss function (cross-entropy)
-loss = -tf.reduce_sum(tf.mul(targets, tf.log(y_hat)))
+loss = -tf.reduce_sum(tf.mul(targets, tf.log(tf.clip_by_value(y_hat,1e-10,1.0))))
 loss_summary = tf.scalar_summary("cross_entropy_loss/", loss)
 
 #Adamame for optimization
@@ -178,7 +178,7 @@ with tf.Session() as sess:
     print("Model initialized.")
   
   print "Training"
-  for _ in range(100):
+  for _ in range(180):
     step += 1
   
     #Fetch a batch
