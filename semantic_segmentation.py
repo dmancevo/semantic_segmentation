@@ -30,7 +30,7 @@ def _pool_layer(input):
 def _deconv_layer(input_layer, filter, input_image, strides):
   '''deconvolution layer'''
   
-  deconv = tf.nn.conv2d_transpose(value=input_layer, filter=_weight_variable(filter),
+  deconv = tf.nn.conv2d_transpose(value=input_layer, filter=tf.Variable(tf.ones(shape=filter, dtype=tf.float32)),
     output_shape=tf.pack((tf.shape(input_layer)[0],tf.shape(input_image)[1],tf.shape(input_image)[2],filter[2])),
     strides=strides, padding='SAME')
     
@@ -105,14 +105,14 @@ for i, name in enumerate(layers):
 ##########################################
 
 #Deconvolutions for up-sampling
-deconv8 = tf.nn.relu(_deconv_layer(input_layer=net['pool3'], filter=(8, 8, 1, 256),
-  input_image=input_image, strides=(1, 8, 8, 1)))
+deconv8 = _deconv_layer(input_layer=net['pool3'], filter=(8, 8, 1, 256),
+  input_image=input_image, strides=(1, 8, 8, 1))
 
-deconv16 = tf.nn.relu(_deconv_layer(input_layer=net['pool4'], filter=(16, 16, 1, 512),
-  input_image=input_image, strides=(1, 16, 16, 1)))
+deconv16 = _deconv_layer(input_layer=net['pool4'], filter=(16, 16, 1, 512),
+  input_image=input_image, strides=(1, 16, 16, 1))
 
-deconv32 = tf.nn.relu(_deconv_layer(input_layer=net['relu7'], filter=(32, 32, 1, 512),
-  input_image=input_image, strides=(1, 32, 32, 1)))
+deconv32 = _deconv_layer(input_layer=net['relu7'], filter=(32, 32, 1, 512),
+  input_image=input_image, strides=(1, 32, 32, 1))
 
 #For heat_map
 # deconv32 = tf.nn.conv2d_transpose(value=net['relu7'], filter=tf.ones(shape=(32, 32, 1, 512)),
@@ -124,8 +124,8 @@ deconv32 = tf.nn.relu(_deconv_layer(input_layer=net['relu7'], filter=(32, 32, 1,
 deconvs = tf.concat(3,(deconv8, deconv16, deconv32))
 
 #One last convolution to rule them all
-conv    = tf.nn.bias_add(tf.nn.conv2d(deconvs, _weight_variable((1,1,3,21)),
-  strides=(1,1,1,1), padding="SAME"), _bias_variable((21,)))
+conv    = tf.nn.bias_add(tf.nn.conv2d(deconvs, tf.Variable(tf.zeros(shape=(1,1,3,21)), dtype=tf.float32),
+  strides=(1,1,1,1), padding="SAME"), tf.Variable(tf.zeros(shape=(21,)), dtype=tf.float32))
   
 #Batch normalization
 from batch_norm import batch_norm
@@ -178,11 +178,11 @@ with tf.Session() as sess:
     print("Model initialized.")
   
   print "Training"
-  for _ in range(180):
+  for _ in range(100):
     step += 1
   
     #Fetch a batch
-    batch = data_set.get_batch(12)
+    batch = data_set.get_batch(20)
     feed_dict={input_image:batch[0], indices:batch[1]}
     
     with tf.device("/gpu:0"):
@@ -195,7 +195,7 @@ with tf.Session() as sess:
       print("Model saved in file: %s" % save_path)
       
       #Test
-      test_batch = data_set.get_batch(12, train=False)
+      test_batch = data_set.get_batch(20, train=False)
       test_feed_dict={input_image:test_batch[0], indices:test_batch[1]}
       
       with tf.device("/cpu:0"):
@@ -238,4 +238,4 @@ with tf.device("/gpu:0"), tf.Session() as sess:
   # heat = deconv32.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:,0]
   # heat = 255*(heat/np.max(heat))
   # scipy.misc.imsave("heat_map".format(,im)
-  # scipy.misc.imsave("image",heat)
+  # scipy.misc.imsave("image",heat
