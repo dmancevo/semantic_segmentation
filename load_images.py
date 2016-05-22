@@ -141,7 +141,14 @@ class Data:
     
     return im_id, im, se
     
-    
+  @staticmethod
+  def get_crop(im_id=None):
+  
+    im_id, im, se = Data.get_image(im_id)
+    im, se = Data.crop(im, se)
+  
+    return im_id, im, se
+  
   
 if __name__ == '__main__':
   

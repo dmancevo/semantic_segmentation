@@ -6,16 +6,6 @@ from load_images import Data
 from datetime import datetime
 import pickle as pkl
 
-def _weight_variable(shape):
-  '''weight variable'''
-  initial = tf.truncated_normal(shape, stddev=0.1)
-  return tf.Variable(initial, dtype=tf.float32)
-
-def _bias_variable(shape):
-  '''bias variable'''
-  initial = tf.constant(0.1, shape=shape)
-  return tf.Variable(initial, dtype=tf.float32)
-
 def _conv_layer(input, weights, bias):
   '''convolution layer'''
   conv = tf.nn.conv2d(input, tf.Variable(weights, dtype=tf.float32),
@@ -26,16 +16,6 @@ def _pool_layer(input):
   '''pool layer'''
   return tf.nn.max_pool(input, ksize=(1, 2, 2, 1),
     strides=(1, 2, 2, 1), padding='SAME')
-          
-def _deconv_layer(input_layer, filter, input_image, strides):
-  '''deconvolution layer'''
-  
-  deconv = tf.nn.conv2d_transpose(value=input_layer, filter=tf.Variable(tf.ones(shape=filter, dtype=tf.float32)),
-    output_shape=tf.pack((tf.shape(input_layer)[0],tf.shape(input_image)[1],tf.shape(input_image)[2],filter[2])),
-    strides=strides, padding='SAME')
-    
-  bias = _bias_variable((filter[2],)) #bias shape should match the output channels of the layer.
-  return tf.nn.bias_add(deconv, bias)
 
 
 ##########################################
@@ -105,27 +85,31 @@ for i, name in enumerate(layers):
 ##########################################
 
 #Deconvolutions for up-sampling
-deconv8 = _deconv_layer(input_layer=net['pool3'], filter=(8, 8, 1, 256),
-  input_image=input_image, strides=(1, 8, 8, 1))
-
-deconv16 = _deconv_layer(input_layer=net['pool4'], filter=(16, 16, 1, 512),
-  input_image=input_image, strides=(1, 16, 16, 1))
-
-deconv32 = _deconv_layer(input_layer=net['relu7'], filter=(32, 32, 1, 512),
-  input_image=input_image, strides=(1, 32, 32, 1))
-
-#For heat_map
-# deconv32 = tf.nn.conv2d_transpose(value=net['relu7'], filter=tf.ones(shape=(32, 32, 1, 512)),
-#     output_shape=tf.pack((tf.shape(net['relu7'])[0],tf.shape(input_image)[1],tf.shape(input_image)[2],1)),
-#     strides=(1, 32, 32, 1), padding='SAME')
   
+deconv8 = tf.nn.conv2d_transpose(
+  value=net['pool3'],
+  filter=tf.Variable(tf.truncated_normal(shape=(8, 8, 1, 256), mean=1.0)),
+  output_shape=tf.pack((tf.shape(net['pool3'])[0],tf.shape(input_image)[1],tf.shape(input_image)[2],1)),
+  strides=(1, 8, 8, 1), padding='SAME') + tf.Variable(tf.truncated_normal(shape=(1,),stddev=0.1), dtype=tf.float32)
+  
+deconv16 = tf.nn.conv2d_transpose(
+  value=net['pool4'],
+  filter=tf.Variable(tf.truncated_normal(shape=(16, 16, 1, 512),mean=1.0)),
+  output_shape=tf.pack((tf.shape(net['pool4'])[0],tf.shape(input_image)[1],tf.shape(input_image)[2],1)),
+  strides=(1, 16, 16, 1), padding='SAME') + tf.Variable(tf.truncated_normal(shape=(1,),stddev=0.1), dtype=tf.float32)
+
+deconv32 = tf.nn.conv2d_transpose(
+  value=net['relu7'],
+  filter=tf.Variable(tf.truncated_normal(shape=(32, 32, 1, 512), mean=1.0)),
+  output_shape=tf.pack((tf.shape(net['relu7'])[0],tf.shape(input_image)[1],tf.shape(input_image)[2],1)),
+  strides=(1, 32, 32, 1), padding='SAME') + tf.Variable(tf.truncated_normal(shape=(1,),stddev=0.1), dtype=tf.float32)
   
 #Concatenate them, one deconvolution per channel
 deconvs = tf.concat(3,(deconv8, deconv16, deconv32))
 
 #One last convolution to rule them all
-conv    = tf.nn.bias_add(tf.nn.conv2d(deconvs, tf.Variable(tf.zeros(shape=(1,1,3,21)), dtype=tf.float32),
-  strides=(1,1,1,1), padding="SAME"), tf.Variable(tf.zeros(shape=(21,)), dtype=tf.float32))
+conv    = tf.nn.conv2d(deconvs, tf.Variable(tf.truncated_normal(shape=(1,1,3,21), mean=1.0), dtype=tf.float32),
+  strides=(1,1,1,1), padding="SAME") + tf.Variable(tf.truncated_normal(shape=(21,),stddev=0.1), dtype=tf.float32)
   
 #Batch normalization
 from batch_norm import batch_norm
@@ -145,11 +129,14 @@ indices = tf.placeholder(tf.int64, shape=(None,None,None))
 targets = tf.one_hot(indices=indices, depth=21, on_value=1.0, off_value=0.0, axis=-1)
 
 #Loss function (cross-entropy)
-loss = -tf.reduce_sum(tf.mul(targets, tf.log(tf.clip_by_value(y_hat,1e-10,1.0))))
+loss = -tf.reduce_sum(tf.mul(targets,tf.log(tf.clip_by_value(y_hat,1e-10,1.0))))
 loss_summary = tf.scalar_summary("cross_entropy_loss/", loss)
 
 #Adamame for optimization
 train_step = tf.train.AdamOptimizer(1e-4).minimize(loss)
+
+# Test time segmentation
+se_hat = tf.argmax(conv, 3)
 
 #Training time in tensor-ville...
 
@@ -194,7 +181,10 @@ with tf.Session() as sess:
       save_path = saver.save(sess, "Model_data/model.ckpt")
       print("Model saved in file: %s" % save_path)
       
-      #Test
+    if step%1 == 5:
+      print step, datetime.now()
+      
+      # Test
       test_batch = data_set.get_batch(20, train=False)
       test_feed_dict={input_image:test_batch[0], indices:test_batch[1]}
       
@@ -206,36 +196,24 @@ with tf.Session() as sess:
         test_summary_str = summary_op.eval(feed_dict=test_feed_dict)
         test_writer.add_summary(test_summary_str, step)
         test_writer.flush()
+        
+    if step%100==0:
+      #Sample image
+      im_id, im, se = Data.get_image("2011_001967")
       
+      # Semantic segmentation
+      with tf.device("/gpu:0"):
+        net_output = se_hat.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:]
+        
+      Data.save_side2side(im_id, net_output, title="examples/semantic_segmentation_example_{step}.png".format(step=step))
+        
+      # Heatmap
+      # heat = deconv32.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:,0]
+      # heat = 255*(heat/np.max(heat))
+      # scipy.misc.imsave("examples/heat.png",heat)
+            
 print step, datetime.now()
+
 #Save step
 with open("Model_data/step.pkl","wb") as f:
   pkl.dump(step,f)
-  
-##########################################
-#########VISUALIZE A FEW EXAMPLES#########
-##########################################
-
-# Test time layer
-se_hat = tf.argmax(conv, 3)
-  
-with tf.device("/gpu:0"), tf.Session() as sess:
-  
-  try:
-    saver.restore(sess, "model.ckpt")
-    print("Model restored.")
-  except:
-    sess.run(tf.initialize_all_variables())
-    print("Model initialized.")
-  
-  #Semantic segmentation
-  im_id, im, se = Data.get_image("2011_001967")
-  net_output = se_hat.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:]
-  Data.save_side2side(im_id, net_output, title="examples/semantic_segmentation_example_{step}.png".format(step=step))
-  
-#   # Heatmap
-  # im_id, im, se = Data.get_image()
-  # heat = deconv32.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:,0]
-  # heat = 255*(heat/np.max(heat))
-  # scipy.misc.imsave("heat_map".format(,im)
-  # scipy.misc.imsave("image",heat
