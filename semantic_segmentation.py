@@ -175,13 +175,13 @@ with tf.Session() as sess:
     with tf.device("/gpu:0"):
       train_step.run(feed_dict=feed_dict)
     
-    if step%20 == 0:
+    if step%100 == 0:
       print step, datetime.now()
       
       save_path = saver.save(sess, "Model_data/model.ckpt")
       print("Model saved in file: %s" % save_path)
       
-    if step%1 == 5:
+    if step%5 == 0:
       print step, datetime.now()
       
       # Test
