@@ -4,4 +4,3 @@ logs
 image_example
 checkpoints
 *.mat
-config.py
