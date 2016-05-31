@@ -1,7 +1,8 @@
 import tensorflow as tf
+from config import MEAN
 
 def _weight_variable(name, shape, train=True):
-    return tf.get_variable(name, initializer=tf.truncated_normal(shape, stddev=0.1), trainable=train)
+    return tf.get_variable(name, initializer=tf.truncated_normal(shape, mean=MEAN, stddev=0.1), trainable=train)
 
 
 def _bias_variable(name, shape, train=True):

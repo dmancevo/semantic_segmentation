@@ -1,4 +1,11 @@
 # semantic_segmentation
+
+semantic_segmentation.py is the Model 1
+sem_segm.py is the Model 2
+config.py contains configuration for the Model 2
+
+
+
 Fully Convolutional Networks for Semantic Segmentation
 
 Reference:

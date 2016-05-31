@@ -14,7 +14,8 @@ import logging
 
 from config import VGG_PATH, CHECKPOINT_DIR, SUMMARY_DIR, SAMPLE_IMAGE_PATH, LOG_FILE, \
     MAX_STEPS, BATCH_SIZE, ACCURACY_EVAL_TRAIN_PORTION, ACCURACY_EVAL_TEST_PORTION, \
-    DROP_PROB, SAVE_AND_EVAL_EVERY, SUMMARY_EVERY
+    DROP_PROB, SAVE_AND_EVAL_EVERY, SUMMARY_EVERY, MAX_HEIGHT, MAX_WIDTH, MEAN, \
+    EXAMPLE_IMAGE_ID, TRAIN
 
 
 def get_inference(images_ph, dropout_keep_prob_ph):
@@ -42,7 +43,7 @@ def get_inference(images_ph, dropout_keep_prob_ph):
     with tf.variable_scope('deconv1') as scope:
         shape = tf.shape(conv8)
         out_shape = tf.pack([shape[0], shape[1]*2, shape[2]*2, 21])
-        weights = tf.Variable(tf.truncated_normal(shape=(4, 4, 21, 21)), name='weights')
+        weights = tf.Variable(tf.truncated_normal(mean=MEAN, stddev=0.1, shape=(4, 4, 21, 21)), name='weights')
         deconv1 = tf.nn.conv2d_transpose( value=conv8,
                                           filter=weights,
                                           output_shape=out_shape,
@@ -63,7 +64,7 @@ def get_inference(images_ph, dropout_keep_prob_ph):
     with tf.variable_scope('deconv2') as scope:
         shape = tf.shape(combined_pred)
         out_shape = tf.pack([shape[0], shape[1]*16, shape[2]*16, 21])
-        weights = tf.Variable(tf.truncated_normal(shape=(32, 32, 21, 21)), name='weights')
+        weights = tf.Variable(tf.truncated_normal(mean=MEAN, stddev=0.1, shape=(32, 32, 21, 21)), name='weights')
         deconv2 = tf.nn.conv2d_transpose(value=combined_pred,
                                           filter=weights,
                                           output_shape=out_shape,
@@ -100,20 +101,27 @@ def get_loss(logits, labels):
 
 
 def get_training(loss, global_step):
-    learning_rate = tf.train.exponential_decay(1e-3, global_step, 500, 0.96, staircase=False)
+    learning_rate = tf.train.exponential_decay(1e-4, global_step, 500, 0.96, staircase=False)
     optimizer = tf.train.AdamOptimizer(learning_rate)
     train_op = optimizer.minimize(loss, global_step=global_step)
     return train_op, learning_rate
 
 
-def get_eval(softmax, labels):
-    with tf.variable_scope('eval') as scope:
-        predictions = tf.argmax(softmax, 3)
-        comp = tf.to_float(tf.equal(predictions, labels))
-    return tf.reduce_sum(comp, [0, 1, 2])
+def get_eval(logits, labels):
+    with tf.variable_scope('loss2') as scope:
+        logits = tf.reshape(logits, [-1, 21], name='logits2d')
+        labels = tf.reshape(labels, [-1], name='labels1d')
+        y_sotfmax = tf.nn.softmax(logits, name='softmax1d')
+        predictions = tf.argmax(y_sotfmax, 1)
+        correct_pred = tf.to_float(tf.equal(labels, predictions))
+        ones = tf.ones_like(labels)
+        eval_count = tf.to_float(tf.unsorted_segment_sum(ones, labels, 21))
+        eval_correct = tf.to_float(tf.unsorted_segment_sum(correct_pred, labels, 21))
+    return eval_count, eval_correct
 
 
 def do_eval(sess,
+            eval_count,
             eval_correct,
             images_ph,
             labels_ph,
@@ -127,17 +135,25 @@ def do_eval(sess,
     else:
         steps = int(sample * data_set.num_examples) // BATCH_SIZE
 
-    true_pixels = 0
-    num_pixels = 0 
+    total_count = np.zeros(shape=(21,))
+    total_correct = np.zeros(shape=(21,))
 
     for step in xrange(steps):
         batch = data_set.next_batch(BATCH_SIZE)
         feed_dict = {images_ph: batch[0], labels_ph: batch[1], dropout_keep_prob_ph: 1.0}
-        true_pixels += sess.run(eval_correct, feed_dict=feed_dict)
-        shape = batch[1][0].shape
-        num_pixels += len(batch[1]) * shape[0] * shape[1]
-    
-    return true_pixels / num_pixels
+        count, correct_pred = sess.run([eval_count, eval_correct], feed_dict=feed_dict)
+        total_count = total_count + count
+        total_correct = total_correct + correct_pred
+
+    nonzero = np.nonzero(total_count)
+    total_count = total_count[nonzero]
+    total_correct = total_correct[nonzero]
+    mean_class_accuracy = total_correct/total_count
+    mean_accuracy = np.mean(mean_class_accuracy)
+    true_pixels = np.sum(total_correct)
+    num_pixels = np.sum(total_count)
+    pixel_accuracy = true_pixels/num_pixels
+    return pixel_accuracy, mean_accuracy
 
 
 def get_best_class_prediction(predictions):
@@ -146,7 +162,18 @@ def get_best_class_prediction(predictions):
     return pred_se
 
 
-def run_training():
+def normalized_loss(loss, images_ph):
+    '''Max size 20x320x320x3'''
+    with tf.variable_scope('normalized_loss') as scope:
+        max_pixels_in_batch = tf.constant(BATCH_SIZE * MAX_HEIGHT * MAX_WIDTH * 3, dtype=tf.float32)
+        shape = tf.shape(images_ph)
+        pixels_in_batch = tf.to_float(shape[0] * shape[1] * shape[2] * shape[3])
+        norm = tf.div(pixels_in_batch, max_pixels_in_batch)
+        norm_loss = tf.mul(loss, norm)
+    return norm_loss
+
+
+def main():
     #logger
     logger = get_logger()
     logger.info('New run')
@@ -161,18 +188,22 @@ def run_training():
     logits = get_inference(images_ph, dropout_keep_prob_ph)
     predictions = get_predictions(logits)
     loss = get_loss(logits, labels_ph)
+    norm_loss = normalized_loss(loss, images_ph)
     train_op, learning_rate = get_training(loss, global_step)
     image_eval = get_best_class_prediction(predictions)
-    evaluation = get_eval(predictions, labels_ph)
+    eval_count, eval_correct = get_eval(logits, labels_ph)
 
     #SUMMARIES
-    loss_summary = tf.scalar_summary(loss.op.name, loss)
+    loss_summary = tf.scalar_summary('loss/loss', loss)
+    norm_loss_summary = tf.scalar_summary('loss/normalized_loss', norm_loss)
     learning_rate_summary = tf.scalar_summary('learning_rate', learning_rate)
-    accuracy_ph = tf.placeholder(tf.float32, shape=(), name='accuracy_ph')
-    accuracy_summary = tf.scalar_summary("pixel_accuracy", accuracy_ph)
+    accuracy_pixel_ph = tf.placeholder(tf.float32, shape=(), name='accuracy_pixel_ph')
+    accuracy_pixel_summary = tf.scalar_summary("accuracy/pixel_accuracy", accuracy_pixel_ph)
+    accuracy_mean_ph = tf.placeholder(tf.float32, shape=(), name='accuracy_mean_ph')
+    accuracy_mean_summary = tf.scalar_summary("accuracy/mean_accuracy", accuracy_mean_ph)
 
-    summary_op_train = tf.merge_summary([loss_summary, learning_rate_summary])
-    summary_op_test = tf.merge_summary([loss_summary])
+    summary_op_train = tf.merge_summary([loss_summary, norm_loss_summary, learning_rate_summary])
+    summary_op_test = tf.merge_summary([loss_summary, norm_loss_summary])
     
     saver = tf.train.Saver(max_to_keep=3)
     
@@ -201,27 +232,27 @@ def run_training():
         train_dataset, test_dataset = load_data.get_datasets()
         
         gs = global_step.eval()
+        
+        if TRAIN:
+            # Instantiate a SummaryWriter to output summaries and the Graph.
+            summary_writer_train = tf.train.SummaryWriter(SUMMARY_DIR + '/train', sess.graph)
+            summary_writer_test = tf.train.SummaryWriter(SUMMARY_DIR + '/test')
 
-        # Instantiate a SummaryWriter to output summaries and the Graph.
-        summary_writer_train = tf.train.SummaryWriter(SUMMARY_DIR + '/train', sess.graph)
-        summary_writer_test = tf.train.SummaryWriter(SUMMARY_DIR + '/test')
+            # TRAINING
+            
+            for step in xrange(MAX_STEPS):
+                start_time = time.time()
+                gs = global_step.eval()
 
-        # TRAINING
-        for step in xrange(MAX_STEPS):
-            start_time = time.time()
-            gs = global_step.eval()
+                batch = train_dataset.next_batch(BATCH_SIZE)
+                feed_dict = {images_ph: batch[0],
+                             labels_ph: batch[1],
+                             dropout_keep_prob_ph: DROP_PROB}
 
-            batch = train_dataset.next_batch(BATCH_SIZE)
-            feed_dict = {images_ph: batch[0],
-                         labels_ph: batch[1],
-                         dropout_keep_prob_ph: DROP_PROB}
+                sess.run(train_op, feed_dict=feed_dict)
 
-            sess.run(train_op, feed_dict=feed_dict)
+                duration = time.time() - start_time
 
-            duration = time.time() - start_time
-
-            # Write the summaries and print an overview fairly often.
-            if (gs + 1) % SUMMARY_EVERY == 0:
                 # Print status to stdout and log
                 if gs != step:
                     msg = 'Global step %d (step = %d); %.3f sec' % (gs, step, duration)
@@ -230,73 +261,86 @@ def run_training():
                 print(msg)
                 logger.info(msg)
 
-                test_batch = train_dataset.next_batch(BATCH_SIZE)
-                feed_dict2 = {images_ph: test_batch[0],
-                              labels_ph: test_batch[1],
-                              dropout_keep_prob_ph: DROP_PROB}
+                # Write the summaries and print an overview fairly often.
+                if (gs + 1) % SUMMARY_EVERY == 0:
+                    test_batch = train_dataset.next_batch(BATCH_SIZE)
+                    feed_dict2 = {images_ph: test_batch[0],
+                                  labels_ph: test_batch[1],
+                                  dropout_keep_prob_ph: DROP_PROB}
 
-                # Update the events file.
-                start_time = time.time()
+                    # Update the events file.
+                    start_time = time.time()
 
-                summary_str_train = sess.run(summary_op_train, feed_dict=feed_dict)
-                summary_writer_train.add_summary(summary_str_train, gs)
-                summary_writer_train.flush()
+                    summary_str_train = sess.run(summary_op_train, feed_dict=feed_dict)
+                    summary_writer_train.add_summary(summary_str_train, gs)
+                    summary_writer_train.flush()
 
-                summary_str_test = sess.run(summary_op_test, feed_dict=feed_dict2)
-                summary_writer_test.add_summary(summary_str_test, gs)
-                summary_writer_test.flush()
+                    summary_str_test = sess.run(summary_op_test, feed_dict=feed_dict2)
+                    summary_writer_test.add_summary(summary_str_test, gs)
+                    summary_writer_test.flush()
 
-                duration = time.time() - start_time
-                msg = 'Summary saved (%.3f)'%(duration)
-                print(msg)
-                logger.info(msg)
+                    duration = time.time() - start_time
+                    msg = 'Summary saved (%.3f)'%(duration)
+                    print(msg)
+                    logger.info(msg)
 
-            #evaluate, save model, save example image 
-            if (gs + 1) % SAVE_AND_EVAL_EVERY == 0 or (step + 1) == MAX_STEPS:
-                #evaluate pixel accuracy
-                eval_train_dataset, eval_test_dataset = load_data.get_datasets()
+                #evaluate, save model, save example image 
+                if (gs + 1) % SAVE_AND_EVAL_EVERY == 0 or (step + 1) == MAX_STEPS:
+                    #evaluate pixel accuracy
+                    eval_train_dataset, eval_test_dataset = load_data.get_datasets()
 
-                start_time = time.time()
-                train_accuracy = do_eval(sess, evaluation, 
-                                        images_ph, labels_ph, dropout_keep_prob_ph,
-                                        eval_train_dataset, ACCURACY_EVAL_TRAIN_PORTION)
-                duration = time.time() - start_time
-                msg = 'train_acc = %.4f (%.3f)' % (train_accuracy, duration)
-                print(msg)
-                logger.info(msg)
+                    start_time = time.time()
 
-                start_time = time.time()
-                test_accuracy = do_eval(sess, evaluation, 
-                                        images_ph, labels_ph, dropout_keep_prob_ph,
-                                        eval_test_dataset, ACCURACY_EVAL_TEST_PORTION)
-                duration = time.time() - start_time
+                    train_pixel_accuracy, train_mean_accuracy = do_eval(sess, eval_count, eval_correct, 
+                                            images_ph, labels_ph, dropout_keep_prob_ph,
+                                            eval_train_dataset, ACCURACY_EVAL_TRAIN_PORTION) 
+                    duration = time.time() - start_time
+                    msg = 'train_pixel_acc = %.4f, train_mean_acc = %.4f  (%.3f)' % (train_pixel_accuracy, train_mean_accuracy, duration)
+                    print(msg)
+                    logger.info(msg)
 
-                msg = 'test_acc = %.4f (%.3f)' % (test_accuracy, duration)
-                print(msg)
-                logger.info(msg)
+                    start_time = time.time()
 
-                train_acc_str = sess.run(accuracy_summary, feed_dict={accuracy_ph: train_accuracy})
-                summary_writer_train.add_summary(train_acc_str, gs)
-                summary_writer_train.flush()
+                    test_pixel_accuracy, test_mean_accuracy = do_eval(sess, eval_count, eval_correct,
+                                            images_ph, labels_ph, dropout_keep_prob_ph,
+                                            eval_test_dataset, ACCURACY_EVAL_TEST_PORTION)
+                    duration = time.time() - start_time
 
-                test_acc_str = sess.run(accuracy_summary, feed_dict={accuracy_ph: test_accuracy})
-                summary_writer_test.add_summary(test_acc_str, gs)
-                summary_writer_test.flush()
+                    msg = 'test_pixel_acc = %.4f, test_mean_acc = %.4f (%.3f)' % (test_pixel_accuracy, test_mean_accuracy, duration)
+                    print(msg)
+                    logger.info(msg)
 
-                #compute and save sample image segmentation
-                im_id = "2011_001967"
-                im, se = load_data.load_one_image(im_id)
-                one_image_pred = sess.run(image_eval, feed_dict={images_ph: im, labels_ph: se, dropout_keep_prob_ph: 1.0})
-                load_data.save_image(im_id, one_image_pred, gs, SAMPLE_IMAGE_PATH)
-                msg = "example image saved"
-                print(msg)
-                logger.info(msg)
+                    train_pixel_acc_str = sess.run(accuracy_pixel_summary, feed_dict={accuracy_pixel_ph: train_pixel_accuracy})
+                    summary_writer_train.add_summary(train_pixel_acc_str, gs)
 
-                #save a checkpoint
-                saver.save(sess, CHECKPOINT_DIR + "/semantic_segmentation", global_step=gs)
+                    train_mean_acc_str = sess.run(accuracy_mean_summary, feed_dict={accuracy_mean_ph: train_mean_accuracy})
+                    summary_writer_train.add_summary(train_mean_acc_str, gs)
+                    summary_writer_train.flush()
 
-        summary_writer_train.close()
-        summary_writer_test.close()
+                    test_pixel_acc_str = sess.run(accuracy_pixel_summary, feed_dict={accuracy_pixel_ph: test_pixel_accuracy})
+                    summary_writer_test.add_summary(test_pixel_acc_str, gs)
+                    test_mean_acc_str = sess.run(accuracy_mean_summary, feed_dict={accuracy_mean_ph: test_mean_accuracy})
+                    summary_writer_test.add_summary(test_mean_acc_str, gs)
+                    summary_writer_test.flush()
+
+                    #compute and save sample image segmentation
+                    im, se = load_data.load_one_image(EXAMPLE_IMAGE_ID)
+                    one_image_pred = sess.run(image_eval, feed_dict={images_ph: im, labels_ph: se, dropout_keep_prob_ph: 1.0})
+                    load_data.save_image(EXAMPLE_IMAGE_ID, one_image_pred, gs, SAMPLE_IMAGE_PATH)
+                    msg = "example image saved"
+                    print(msg)
+                    logger.info(msg)
+
+                    #save a checkpoint
+                    saver.save(sess, CHECKPOINT_DIR + "/semantic_segmentation", global_step=gs)
+
+            summary_writer_train.close()
+            summary_writer_test.close()
+        else:
+            #compute and save sample image segmentation
+            im, se = load_data.load_one_image(EXAMPLE_IMAGE_ID)
+            one_image_pred = sess.run(image_eval, feed_dict={images_ph: im, labels_ph: se, dropout_keep_prob_ph: 1.0})
+            load_data.save_image(EXAMPLE_IMAGE_ID, one_image_pred, gs, SAMPLE_IMAGE_PATH)
 
 def get_logger():
     # create logger
@@ -309,5 +353,5 @@ def get_logger():
     return logger
         
 if __name__ == '__main__':
-    run_training()
+    main()
     

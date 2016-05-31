@@ -10,13 +10,6 @@ import tensorflow as tf
 
 from config import IM_PATH, SE_PATH, TRAIN_VAL_PATH, MAX_HEIGHT, MAX_WIDTH
 
-"""
-IM_PATH = "TrainVal/VOCdevkit/VOC2012/JPEGImages/"
-SE_PATH = "TrainVal/VOCdevkit/VOC2012/SegmentationClass/"
-TRAIN_VAL_PATH = "TrainVal/VOCdevkit/VOC2012/ImageSets/Segmentation/"
-MAX_HEIGHT = 320
-MAX_WIDTH = 320
-"""
 
 IM_FILENAME = "{im_id}.jpg"
 SE_FILEMANE = "{im_id}.png"
@@ -130,7 +123,7 @@ def save_image(im_id, se, global_step, path):
     im = scipy.misc.imread(IM_PATH + IM_FILENAME.format(im_id=im_id))
     se = scipy.misc.imread(SE_PATH + SE_FILEMANE.format(im_id=im_id))
     
-    scipy.misc.imsave(path + '/segmentation_step_%d.jpg'%(global_step) ,np.hstack((im,se,rgb_segm)))
+    scipy.misc.imsave(path + '/segmentation_step_%s_%d.jpg'%(im_id,global_step) ,np.hstack((im,se,rgb_segm)))
 
 
 def split_into_train_test(train_frac=None):
