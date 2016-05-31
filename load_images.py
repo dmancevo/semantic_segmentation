@@ -157,15 +157,17 @@ if __name__ == '__main__':
   # save_side2side(np.random.choice(Data.images))
   
   data_set = Data()
-  print datetime.now()
-  for _ in range(10):
+  # print datetime.now()
+  # for _ in range(10):
     
-    batch = data_set.get_batch(20, train=True)
+  #   batch = data_set.get_batch(20, train=True)
 
-  print datetime.now()
+  # print datetime.now()
   
   # batch = data_set.get_batch(7, train=False)
   
   # print batch[0][0].shape, batch[1][0].shape
   # print batch[0][1].shape, batch[1][1].shape
+  
+  print scipy.misc.imread("TrainVal/VOCdevkit/VOC2011/SegmentationClass/2011_001967.png").astype(np.int).shape
   

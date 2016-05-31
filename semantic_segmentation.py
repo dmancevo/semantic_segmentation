@@ -143,77 +143,131 @@ se_hat = tf.argmax(conv, 3)
 #Saver object
 saver = tf.train.Saver()
 
-#Step
-try:
-  with open("Model_data/step.pkl","rb") as f:
-    step = pkl.load(f)
-except:
-  step = 0
+# #Step
+# try:
+#   with open("Model_data/step.pkl","rb") as f:
+#     step = pkl.load(f)
+# except:
+#   step = 0
+
+# data_set = Data()
+# with tf.Session() as sess:
+  
+#   train_writer = tf.train.SummaryWriter("./Model_data/train/", sess.graph)
+#   test_writer = tf.train.SummaryWriter("./Model_data/test/")
+#   summary_op = tf.merge_all_summaries()
+  
+#   try:
+#     saver.restore(sess, "Model_data/model.ckpt")
+#     print("Model restored.")
+#   except:
+#     sess.run(tf.initialize_all_variables())
+#     print("Model initialized.")
+  
+#   print "Training"
+#   for _ in range(100):
+#     step += 1
+  
+#     #Fetch a batch
+#     batch = data_set.get_batch(20)
+#     feed_dict={input_image:batch[0], indices:batch[1]}
+    
+#     with tf.device("/gpu:0"):
+#       train_step.run(feed_dict=feed_dict)
+    
+#     if step%100 == 0:
+#       print step, datetime.now()
+      
+#       save_path = saver.save(sess, "Model_data/model.ckpt")
+#       print("Model saved in file: %s" % save_path)
+      
+#     if step%5 == 0:
+#       print step, datetime.now()
+      
+#       # Test
+#       test_batch = data_set.get_batch(20, train=False)
+#       test_feed_dict={input_image:test_batch[0], indices:test_batch[1]}
+      
+#       with tf.device("/cpu:0"):
+#         train_summary_str = summary_op.eval(feed_dict=feed_dict)
+#         train_writer.add_summary(train_summary_str, step)
+#         train_writer.flush()
+        
+#         test_summary_str = summary_op.eval(feed_dict=test_feed_dict)
+#         test_writer.add_summary(test_summary_str, step)
+#         test_writer.flush()
+        
+#     if step%100==0:
+#       #Sample image
+#       im_id, im, se = Data.get_image("2011_001967")
+      
+#       # Semantic segmentation
+#       with tf.device("/gpu:0"):
+#         net_output = se_hat.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:]
+        
+#       Data.save_side2side(im_id, net_output, title="examples/semantic_segmentation_example_{step}.png".format(step=step))
+        
+#       # Heatmap
+#       # heat = deconv32.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:,0]
+#       # heat = 255*(heat/np.max(heat))
+#       # scipy.misc.imsave("examples/heat.png",heat)
+            
+# print step, datetime.now()
+
+# #Save step
+# with open("Model_data/step.pkl","wb") as f:
+#   pkl.dump(step,f)
+
+
+#Save a few more examples
+# with tf.Session() as sess:
+#   saver.restore(sess, "Model_data/model.ckpt")
+#   print("Model restored.")
+  
+#   Images = []
+#   for _ in range(10):
+#     im_id, im, se = Data.get_image()
+#     Images.append((im_id,im,se))
+  
+#   with tf.device("/gpu:0"):
+#     for im_id, im, se in Images:
+#       net_output = se_hat.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:]
+#       Data.save_side2side(im_id, net_output, title="examples/semantic_segmentation_more_examples_{im_id}.png".format(im_id=im_id))
+
+#Compute pixel accuracy
+
+correct = tf.to_float(tf.equal(tf.to_int64(indices), se_hat))
+pixel_acc = tf.reduce_mean(correct)
+all_counts = tf.add(indices,1)
+correct_counts = tf.mul(correct,tf.to_float(tf.add(indices,1)))
+
+Pixel = 0
+All, Correct = np.zeros(21), np.zeros(21)
 
 data_set = Data()
 with tf.Session() as sess:
+  saver.restore(sess, "Model_data/model.ckpt")
+  print("Model restored.")
   
-  train_writer = tf.train.SummaryWriter("./Model_data/train/", sess.graph)
-  test_writer = tf.train.SummaryWriter("./Model_data/test/")
-  summary_op = tf.merge_all_summaries()
-  
-  try:
-    saver.restore(sess, "Model_data/model.ckpt")
-    print("Model restored.")
-  except:
-    sess.run(tf.initialize_all_variables())
-    print("Model initialized.")
-  
-  print "Training"
-  for _ in range(100):
-    step += 1
-  
-    #Fetch a batch
-    batch = data_set.get_batch(20)
-    feed_dict={input_image:batch[0], indices:batch[1]}
+  with tf.device("/gpu:0"):
     
-    with tf.device("/gpu:0"):
-      train_step.run(feed_dict=feed_dict)
-    
-    if step%100 == 0:
-      print step, datetime.now()
+    for n in range(10):
+      batch = data_set.get_batch(20)
+      feed_dict={input_image:batch[0], indices:batch[1]}
+      pxl_acc = pixel_acc.eval(feed_dict=feed_dict)
+      a_classes = np.bincount(all_counts.eval(feed_dict=feed_dict).flatten().astype(np.int))
+      c_classes = np.bincount(correct_counts.eval(feed_dict=feed_dict).flatten().astype(np.int))
       
-      save_path = saver.save(sess, "Model_data/model.ckpt")
-      print("Model saved in file: %s" % save_path)
-      
-    if step%5 == 0:
-      print step, datetime.now()
-      
-      # Test
-      test_batch = data_set.get_batch(20, train=False)
-      test_feed_dict={input_image:test_batch[0], indices:test_batch[1]}
-      
-      with tf.device("/cpu:0"):
-        train_summary_str = summary_op.eval(feed_dict=feed_dict)
-        train_writer.add_summary(train_summary_str, step)
-        train_writer.flush()
+      Pixel = float(n*Pixel + pxl_acc)/(n+1)
+      print Pixel
+      for i in range(len(c_classes)):
+        if i==0: continue
         
-        test_summary_str = summary_op.eval(feed_dict=test_feed_dict)
-        test_writer.add_summary(test_summary_str, step)
-        test_writer.flush()
-        
-    if step%100==0:
-      #Sample image
-      im_id, im, se = Data.get_image("2011_001967")
-      
-      # Semantic segmentation
-      with tf.device("/gpu:0"):
-        net_output = se_hat.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:]
-        
-      Data.save_side2side(im_id, net_output, title="examples/semantic_segmentation_example_{step}.png".format(step=step))
-        
-      # Heatmap
-      # heat = deconv32.eval(feed_dict={input_image:[im], indices:[se]})[0,:,:,0]
-      # heat = 255*(heat/np.max(heat))
-      # scipy.misc.imsave("examples/heat.png",heat)
-            
-print step, datetime.now()
+        All[i-1] += a_classes[i]
+        Correct[i-1] += c_classes[i]
+     
 
-#Save step
-with open("Model_data/step.pkl","wb") as f:
-  pkl.dump(step,f)
+pxl_acc_class = {i:float(Correct[i])/max(1,All[i]) for i in range(len(Correct))}
+ 
+print "Pixel Accuracy: ", Pixel
+print "Per-class pizel accuracy: ", pxl_acc_class
